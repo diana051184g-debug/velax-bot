@@ -149,18 +149,26 @@ def private_admin_commands(message):
             bot.reply_to(message, f"🔓 **Разбан выполнен!** Пользователь @{username} удален из ЧС группы.")
         except Exception: bot.reply_to(message, "❌ Не удалось разбанить.")
 
-# 3. ПОЛЬЗОВАТЕЛЬСКИЙ РЕПОРТ (ПРЯМАЯ ПЕРЕСЫЛКА СООБЩЕНИЯ НАРУШИТЕЛЯ)
+# 3. ПОЛЬЗОВАТЕЛЬСКИЙ РЕПОРТ В ОБЩЕЙ ГРУППЕ «ЧАТИКС» (ТЕКСТ + ПЕРЕСЫЛКА)
 @bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID and (msg.text.lower().startswith(('/report', '!репорт', '!report'))))
 def handle_report(message):
     if not message.reply_to_message:
         bot.reply_to(message, "❌ Пишите команду в ответ на сообщение нарушителя!")
         return
     try:
-        # 1. Сначала шлем инфу, кто пожаловался
-        info_text = f"🚨 **РЕПОРТ В ЧАТИКС!**\n👤 Жалоба от: @{message.from_user.username}\n👇 Ниже переслано сообщение нарушителя:"
-        bot.send_message(MY_ID, info_text, parse_mode='Markdown')
+        reported_user = message.reply_to_message.from_user
+        bad_message = message.reply_to_message.text if message.reply_to_message.text else "[Медиа/Стикер]"
         
-        # 2. Напрямую ПЕРЕСЫЛАЕМ сообщение нарушителя Максиму в личку (сохраняет весь текст, фото, гиф или стикер)
+        # 1. Формируем сочный текстовый отчет
+        report_notification = (
+            f"🚨 **РЕПОРТ В ЧАТИКС!**\n\n"
+            f"👤 **От:** @{message.from_user.username}\n"
+            f"🎯 **На:** @{reported_user.username}\n"
+            f"💬 **Текст:** _{bad_message}_"
+        )
+        bot.send_message(MY_ID, report_notification, parse_mode='Markdown')
+        
+        # 2. Следом напрямую пересылаем оригинал сообщения нарушителя Максиму в личку
         bot.forward_message(MY_ID, CHAT_ID, message.reply_to_message.message_id)
         
         bot.reply_to(message, "✅ Жалоба отправлена владельцу канала.")
