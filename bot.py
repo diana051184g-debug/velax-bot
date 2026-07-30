@@ -68,33 +68,25 @@ def parse_duration(duration_str):
     if unit == 'h': return amount * 3600
     if unit == 'd': return amount * 86400
     return 86400
-# Функция ультимативного поиска ID нарушителя по юзернейму из текста команды
+
 def find_target_user_id(message, args):
-    # Способ 1: Ищем юзернейм с собачкой @ в тексте команды
     mentions = [word for word in args if word.startswith('@')]
     if mentions:
         username = mentions[0].replace('@', '').strip().lower()
         if username in USER_ID_CACHE:
             return USER_ID_CACHE[username], f"@{username}"
-            
-    # Способ 2: Если Максим просто нажал "Ответить" на сообщение нарушителя
     if message.reply_to_message:
         target = message.reply_to_message.from_user
         if target.username:
             USER_ID_CACHE[target.username.lower()] = target.id
         return target.id, target.first_name
-        
     return None, None
-
 @bot.middleware_handler(update_types=['message'])
 def anti_flood_middleware(bot_instance, message):
     user_id = message.from_user.id
     current_time = time.time()
-    
-    # Вечно запоминаем ID каждого активного юзера чата по его нику для команд бана/мута
     if message.from_user.username:
         USER_ID_CACHE[message.from_user.username.lower()] = user_id
-        
     if user_id in LAST_MESSAGE_TIME and current_time - LAST_MESSAGE_TIME[user_id] < FLOOD_DELAY: return False
     LAST_MESSAGE_TIME[user_id] = current_time
 
@@ -113,19 +105,18 @@ def auto_reply_rules(message):
         if media_type == "animation" and media_id: bot.send_animation(CHAT_ID, media_id, caption=rules_text, reply_to_message_id=message.message_id)
         else: bot.reply_to(message, rules_text)
 
-# 2. УЛЬТИМАТИВНЫЙ АДМИН-ПУЛЬТ: УПРАВЛЕНИЕ ПО ТЕКСТУ С НИКАМИ И ВРЕМЕНЕМ
+# 2. АДМИН-КОМАНДЫ ДЛЯ МАКСИМА (/mute, /ban, /unmute, /unban)
 @bot.message_handler(commands=['ban', 'mute', 'unmute', 'unban'], func=lambda msg: msg.chat.id == CHAT_ID)
 def admin_advanced_commands(message):
-    if message.from_user.id != MY_ID: return  # Слушаемся только Максима
+    if message.from_user.id != MY_ID: return
 
     args = message.text.split()
-    command = args[0].lower()
+    command = args[0].lower()  # ПОЧИНЕНО: берём только первое слово-команду
     now = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
 
-    # Ищем ID нарушителя по нику @username или по ответу на пост
     target_id, target_name = find_target_user_id(message, args)
     if not target_id:
-        bot.reply_to(message, "❌ Нарушитель не найден в кэше! Чтобы наказать по нику, введите команду в ответ на любое его сообщение в чате, чтобы бот запомнил его ID!")
+        bot.reply_to(message, "❌ Пользователь не найден! Чтобы наказать по нику, он должен сначала написать что-то в чат после перезапуска бота.")
         return
 
     # ОБРАБОТКА /mute @username [время]
@@ -135,38 +126,52 @@ def admin_advanced_commands(message):
         until_timestamp = int(time.time() + seconds)
         try:
             bot.restrict_chat_member(CHAT_ID, target_id, until_date=until_timestamp, can_send_messages=False)
-            bot.reply_to(message, f"🤐 **Mute Success!** Нарушитель {target_name} замучен на срок: `{duration_str}` [💡].")
-            bot.send_message(MY_ID, f"🛠️ **LOG: MUTE**\n👤 Target: {target_name}\n🕒 Duration: {duration_str}\n🕒 Time: {now}", parse_mode='Markdown')
-        except Exception: bot.reply_to(message, "❌ Ошибка прав. Выдай боту админку!")
+            bot.reply_to(message, f"🤐 **Мут выдан!** Нарушитель {target_name} замучен на срок: `{duration_str}`.")
+            bot.send_message(MY_ID, f"🛠️ **ЛОГ: МУТ**\n👤 Цель: {target_name}\n🕒 Срок: {duration_str}\n🕒 Время: {now}", parse_mode='Markdown')
+        except Exception: bot.reply_to(message, "❌ Ошибка прав. Выдай боту админку в чате!")
 
     # ОБРАБОТКА /ban @username [время]
     elif command == '/ban':
-        # Если время не указано, ставим 0 — это ВЕЧНЫЙ БАН в Telegram API навсегда
         duration_str = args[2] if len(args) > 2 else "0"
         seconds = parse_duration(duration_str)
         until_timestamp = int(time.time() + seconds) if seconds > 0 else 0
         try:
             bot.ban_chat_member(CHAT_ID, target_id, until_date=until_timestamp)
             disp_time = f"на срок {duration_str}" if seconds > 0 else "НАВСЕГДА 🛑"
-            bot.reply_to(message, f"🔨 **Ban Success!** Нарушитель {target_name} забанен {disp_time} [💡].")
-            bot.send_message(MY_ID, f"🛠️ **LOG: BAN**\n👤 Target: {target_name}\n🕒 Duration: {disp_time}\n🕒 Time: {now}", parse_mode='Markdown')
+            bot.reply_to(message, f"🔨 **Бан выдан!** Нарушитель {target_name} забанен {disp_time}.")
+            bot.send_message(MY_ID, f"🛠️ **ЛОГ: БАН**\n👤 Цель: {target_name}\n🕒 Срок: {disp_time}\n🕒 Время: {now}", parse_mode='Markdown')
         except Exception: bot.reply_to(message, "❌ Не удалось забанить.")
 
     # ОБРАБОТКА /unmute @username
     elif command == '/unmute':
         try:
             bot.restrict_chat_member(CHAT_ID, target_id, can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True)
-            bot.reply_to(message, f"😇 **Unmute Success!** С нарушителя {target_name} сняты все ограничения.")
+            bot.reply_to(message, f"😇 **Размут!** С пользователя {target_name} сняты ограничения.")
         except Exception: bot.reply_to(message, "❌ Ошибка снятия мута.")
 
     # ОБРАБОТКА /unban @username
     elif command == '/unban':
         try:
             bot.unban_chat_member(CHAT_ID, target_id, only_if_banned=True)
-            bot.reply_to(message, f"🔓 **Unban Success!** Пользователь {target_name} полностью удален из черного списка чата.")
+            bot.reply_to(message, f"🔓 **Разбан!** {target_name} удален из ЧС группы.")
         except Exception: bot.reply_to(message, "❌ Ошибка разбана.")
 
-# 3. АВТО-МОДЕРАЦИЯ И АНТИСПАМ
+# 3. ПОЛЬЗОВАТЕЛЬСКИЙ РЕПОРТ
+@bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID and (msg.text.lower().startswith(('/report', '!репорт', '!report'))))
+def handle_report(message):
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Пишите команду в ответ на сообщение нарушителя!")
+        return
+    reported_user = message.reply_to_message.from_user
+    bad_message = message.reply_to_message.text if message.reply_to_message.text else "[Медиа/Стикер]"
+    now = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+    report_notification = f"🚨 **РЕПОРТ В ЧАТИКС!**\n👤 От: @{message.from_user.username}\n🎯 На: @{reported_user.username}\n💬 Текст: _{bad_message}_\n🔗 Ссылка: https://t.me{str(CHAT_ID)[4:]}/{message.reply_to_message.message_id}"
+    try:
+        bot.send_message(MY_ID, report_notification, parse_mode='Markdown')
+        bot.reply_to(message, "✅ Жалоба отправлена владельцу канала.")
+    except Exception: pass
+
+# 4. АВТО-МОДЕРАЦИЯ И АНТИСПАМ (ОБЫЧНЫЙ ТЕКСТ)
 @bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID)
 def moderate_chatix(message):
     if not message.text: return
@@ -198,7 +203,7 @@ def moderate_chatix(message):
             except Exception: pass
             break
 
-# 4. НАСТРОЙКА ИЗ ЛИЧКИ
+# 5. НАСТРОЙКА ИЗ ЛИЧКИ
 user_state = {}
 @bot.message_handler(commands=['start', 'setrules'], chat_types=['private'])
 def private_commands(message):
