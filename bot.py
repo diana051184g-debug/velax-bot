@@ -17,19 +17,16 @@ TEXT_FILE = "rules_text.txt"
 MEDIA_FILE = "rules_media.txt"
 TYPE_FILE = "rules_type.txt"
 
-# База данных для антифлуда и антиспама
 LAST_MESSAGE_TIME = {}
-FLOOD_DELAY = 1.0  # Задержка между командами
+FLOOD_DELAY = 1.0
 
-# 🛡️ ИСТОРИЯ СООБЩЕНИЙ ДЛЯ БОРЬБЫ СО СПАМОМ
-USER_LAST_MESSAGES = {}  # Хранит текст последнего сообщения пользователя
-USER_SPAM_COUNT = {}     # Хранит количество повторов
+USER_LAST_MESSAGES = {}
+USER_SPAM_COUNT = {}
 
-# 🚫 РАСШИРЕННЫЙ ЧЕРНЫЙ СПИСОК СЛОВ ДЛЯ АВТО-УДАЛЕНИЯ
 BAD_WORDS = [
     "t.me/", "https://", "http://", "://vk.com", "приглашаю в канал",
     "читы", "скачать читы", "взлом майнкрафт", "продам аккаунт", "купите голду", "читы на майнк",
-    "шлюха", "пидор", "негр", "уебок", "хуесос", "админ пидорас", "сука", "блять", "нахуй"
+    "шлюха", "пидор", "негр", "уебок", "хуесос", "админ пидорас", "сука", "блять", "нах"
 ]
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -65,8 +62,8 @@ def anti_flood_middleware(bot_instance, message):
     if user_id in LAST_MESSAGE_TIME and current_time - LAST_MESSAGE_TIME[user_id] < FLOOD_DELAY: return False
     LAST_MESSAGE_TIME[user_id] = current_time
 
-# 1. АВТО-ОТВЕТ ГИФКОЙ И ТЕКСТОМ НА КАЖДЫЙ ПОСТ ИЗ КАНАЛА
-@bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID and msg.from_user.username == "Channel_Bot")
+# 1. ЖЕЛЕЗОБЕТОННЫЙ АВТО-ОТВЕТ НА ЛЮБЫЕ ПОСТЫ ИЗ КАНАЛА (ПРОВЕРКА ТИПА И ОТПРАВИТЕЛЯ)
+@bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID and (msg.forward_from_chat is not None or msg.from_user.username == "Channel_Bot" or getattr(message, 'is_automatic_forward', False)))
 def auto_reply_rules(message):
     media_id, media_type, rules_text = load_rules_data()
     try:
@@ -80,19 +77,22 @@ def auto_reply_rules(message):
         if media_type == "animation" and media_id: bot.send_animation(CHAT_ID, media_id, caption=rules_text, reply_to_message_id=message.message_id)
         else: bot.reply_to(message, rules_text)
 
-# 2. УМНАЯ МОДЕРАЦИЯ: ФИЛЬТР МАТОВ + АНТИСПАМ ОДНОТИПНЫХ СООБЩЕНИЙ
+# 2. УМНАЯ МОДЕРАЦИЯ И АНТИСПАМ
 @bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID)
 def moderate_chatix(message):
     if not message.text: return
+    
+    # Игнорируем проверку матов для автоматических постов канала
+    if message.forward_from_chat is not None or message.from_user.username == "Channel_Bot": return
+
     user_id = message.from_user.id
     text_lower = message.text.lower()
     now = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
 
-    # --- АНТИСПАМ ПРОВЕРКА (ОДНОТИПНЫЕ СООБЩЕНИЯ) ---
+    # Антиспам однотипных сообщений
     if user_id in USER_LAST_MESSAGES:
         if USER_LAST_MESSAGES[user_id] == text_lower:
             USER_SPAM_COUNT[user_id] = USER_SPAM_COUNT.get(user_id, 1) + 1
-            # Если отправил одно и то же сообщение больше 2 раз подряд
             if USER_SPAM_COUNT[user_id] > 2:
                 try:
                     bot.delete_message(CHAT_ID, message.message_id)
@@ -110,7 +110,7 @@ def moderate_chatix(message):
             USER_SPAM_COUNT[user_id] = 1
     USER_LAST_MESSAGES[user_id] = text_lower
 
-    # --- ПРОВЕРКА ЗАПРЕЩЕННЫХ СЛОВ ---
+    # Фильтр запрещенных слов
     for word in BAD_WORDS:
         if word in text_lower:
             try:
@@ -126,7 +126,7 @@ def moderate_chatix(message):
             except Exception: pass
             break
 
-# 3. НАСТРОЙКА ИЗ ЛИЧКИ БОТА (ТОЛЬКО ДЛЯ ТЕБЯ)
+# 3. НАСТРОЙКА ПРАВИЛ В ЛИЧКЕ
 user_state = {}
 
 @bot.message_handler(commands=['start', 'setrules'], chat_types=['private'])
