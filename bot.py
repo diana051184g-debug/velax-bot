@@ -1,6 +1,7 @@
 import telebot
 import os
 import time
+from datetime import datetime
 from threading import Thread
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -8,117 +9,172 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TOKEN = '8878411112:AAFaVrVm9no5idWcHmUqGqVnCU4EpXaCLGU'
 telebot.apihelper.ENABLE_MIDDLEWARE = True
 bot = telebot.TeleBot(TOKEN)
-MY_ID = 5462607206
-CHAT_ID = -1002914914953
+MY_ID = 5462607206  # Твой личный ID Максима
+CHAT_ID = -1002914914953  # ID группы "Чатикс"
 # =========================
 
-# Файлы базы данных
 TEXT_FILE = "rules_text.txt"
-VIDEO_FILE = "rules_video.txt"
-LAST_MESSAGE_TIME = {}
-FLOOD_DELAY = 1.5
+MEDIA_FILE = "rules_media.txt"
+TYPE_FILE = "rules_type.txt"
 
-# Встроенный веб-сервер для обмана хостинга (Ping-Pong)
+# База данных для антифлуда и антиспама
+LAST_MESSAGE_TIME = {}
+FLOOD_DELAY = 1.0  # Задержка между командами
+
+# 🛡️ ИСТОРИЯ СООБЩЕНИЙ ДЛЯ БОРЬБЫ СО СПАМОМ
+USER_LAST_MESSAGES = {}  # Хранит текст последнего сообщения пользователя
+USER_SPAM_COUNT = {}     # Хранит количество повторов
+
+# 🚫 РАСШИРЕННЫЙ ЧЕРНЫЙ СПИСОК СЛОВ ДЛЯ АВТО-УДАЛЕНИЯ
+BAD_WORDS = [
+    "t.me/", "https://", "http://", "://vk.com", "приглашаю в канал",
+    "читы", "скачать читы", "взлом майнкрафт", "продам аккаунт", "купите голду", "читы на майнк",
+    "шлюха", "пидор", "негр", "уебок", "хуесос", "админ пидорас", "сука", "блять", "нахуй"
+]
+
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         self.wfile.write(b"Bot is alive 24/7!")
-    def log_message(self, format, *args):
-        return
+    def log_message(self, format, *args): return
 
-def run_health_server():
-    server_address = ('', int(os.environ.get('PORT', 8080)))
-    httpd = HTTPServer(server_address, HealthCheckHandler)
-    httpd.serve_forever()
-
-# Запускаем обманщик в отдельном потоке
-Thread(target=run_health_server, daemon=True).start()
+Thread(target=lambda: HTTPServer(('', int(os.environ.get('PORT', 8080))), HealthCheckHandler).serve_forever(), daemon=True).start()
 
 def load_rules_data():
-    video_id = None
-    text_data = "Привет! Правила канала Velax FAMILY еще не настроены. Веди себя хорошо! 🔥"
-    if os.path.exists(VIDEO_FILE):
-        with open(VIDEO_FILE, "r", encoding="utf-8") as f:
-            video_id = f.read().strip() or None
+    media_id, media_type = None, "text"
+    text_data = "Привет! Правила канала Velax FAMILY еще не настроены. 🔥"
+    if os.path.exists(MEDIA_FILE):
+        with open(MEDIA_FILE, "r", encoding="utf-8") as f: media_id = f.read().strip() or None
+    if os.path.exists(TYPE_FILE):
+        with open(TYPE_FILE, "r", encoding="utf-8") as f: media_type = f.read().strip() or "text"
     if os.path.exists(TEXT_FILE):
-        with open(TEXT_FILE, "r", encoding="utf-8") as f:
-            text_data = f.read()
-    return video_id, text_data
+        with open(TEXT_FILE, "r", encoding="utf-8") as f: text_data = f.read()
+    return media_id, media_type, text_data
 
-def save_rules_data(video_id, text_data):
-    with open(TEXT_FILE, "w", encoding="utf-8") as f:
-        f.write(text_data if text_data else "")
-    with open(VIDEO_FILE, "w", encoding="utf-8") as f:
-        f.write(video_id if video_id else "")
+def save_rules_data(media_id, media_type, text_data):
+    with open(TEXT_FILE, "w", encoding="utf-8") as f: f.write(text_data if text_data else "")
+    with open(MEDIA_FILE, "w", encoding="utf-8") as f: f.write(media_id if media_id else "")
+    with open(TYPE_FILE, "w", encoding="utf-8") as f: f.write(media_type if media_type else "text")
 
 @bot.middleware_handler(update_types=['message'])
 def anti_flood_middleware(bot_instance, message):
     user_id = message.from_user.id
     current_time = time.time()
-    if user_id in LAST_MESSAGE_TIME:
-        if current_time - LAST_MESSAGE_TIME[user_id] < FLOOD_DELAY:
-            return False
+    if user_id in LAST_MESSAGE_TIME and current_time - LAST_MESSAGE_TIME[user_id] < FLOOD_DELAY: return False
     LAST_MESSAGE_TIME[user_id] = current_time
 
+# 1. АВТО-ОТВЕТ ГИФКОЙ И ТЕКСТОМ НА КАЖДЫЙ ПОСТ ИЗ КАНАЛА
 @bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID and msg.from_user.username == "Channel_Bot")
 def auto_reply_rules(message):
-    video_id, rules_text = load_rules_data()
+    media_id, media_type, rules_text = load_rules_data()
     try:
-        if video_id:
-            bot.send_video(CHAT_ID, video_id, caption=rules_text, reply_to_message_id=message.message_id, parse_mode='Markdown')
+        if media_type == "animation" and media_id:
+            bot.send_animation(CHAT_ID, media_id, caption=rules_text, reply_to_message_id=message.message_id, parse_mode='Markdown')
+        elif media_type == "photo" and media_id:
+            bot.send_photo(CHAT_ID, media_id, caption=rules_text, reply_to_message_id=message.message_id, parse_mode='Markdown')
         else:
             bot.reply_to(message, rules_text, parse_mode='Markdown')
     except Exception:
-        if video_id:
-            bot.send_video(CHAT_ID, video_id, caption=rules_text, reply_to_message_id=message.message_id)
-        else:
-            bot.reply_to(message, rules_text)
+        if media_type == "animation" and media_id: bot.send_animation(CHAT_ID, media_id, caption=rules_text, reply_to_message_id=message.message_id)
+        else: bot.reply_to(message, rules_text)
 
+# 2. УМНАЯ МОДЕРАЦИЯ: ФИЛЬТР МАТОВ + АНТИСПАМ ОДНОТИПНЫХ СООБЩЕНИЙ
+@bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID)
+def moderate_chatix(message):
+    if not message.text: return
+    user_id = message.from_user.id
+    text_lower = message.text.lower()
+    now = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+
+    # --- АНТИСПАМ ПРОВЕРКА (ОДНОТИПНЫЕ СООБЩЕНИЯ) ---
+    if user_id in USER_LAST_MESSAGES:
+        if USER_LAST_MESSAGES[user_id] == text_lower:
+            USER_SPAM_COUNT[user_id] = USER_SPAM_COUNT.get(user_id, 1) + 1
+            # Если отправил одно и то же сообщение больше 2 раз подряд
+            if USER_SPAM_COUNT[user_id] > 2:
+                try:
+                    bot.delete_message(CHAT_ID, message.message_id)
+                    log_spam = (
+                        f"🛡️ **АВТО-МОДЕРАЦИЯ: СПАМ УДАЛЕН!**\n\n"
+                        f"👤 **Нарушитель:** @{message.from_user.username} [ID: {user_id}]\n"
+                        f"🕒 **Время:** {now}\n"
+                        f"📈 **Причина:** Спам однотипными сообщениями (повторов: {USER_SPAM_COUNT[user_id]})\n"
+                        f"💬 **Текст спама:** _{message.text}_"
+                    )
+                    bot.send_message(MY_ID, log_spam, parse_mode='Markdown')
+                    return
+                except Exception: pass
+        else:
+            USER_SPAM_COUNT[user_id] = 1
+    USER_LAST_MESSAGES[user_id] = text_lower
+
+    # --- ПРОВЕРКА ЗАПРЕЩЕННЫХ СЛОВ ---
+    for word in BAD_WORDS:
+        if word in text_lower:
+            try:
+                bot.delete_message(CHAT_ID, message.message_id)
+                log_text = (
+                    f"🛡️ **АВТО-МОДЕРАЦИЯ: МАТ/ССЫЛКА УДАЛЕНА!**\n\n"
+                    f"👤 **Нарушитель:** @{message.from_user.username} [ID: {user_id}]\n"
+                    f"🕒 **Время:** {now}\n"
+                    f"🚫 **Запрещенное слово:** `{word}`\n"
+                    f"💬 **Полный текст:** _{message.text}_"
+                )
+                bot.send_message(MY_ID, log_text, parse_mode='Markdown')
+            except Exception: pass
+            break
+
+# 3. НАСТРОЙКА ИЗ ЛИЧКИ БОТА (ТОЛЬКО ДЛЯ ТЕБЯ)
 user_state = {}
 
 @bot.message_handler(commands=['start', 'setrules'], chat_types=['private'])
 def private_commands(message):
-    if message.from_user.id != MY_ID:
-        bot.send_message(message.chat.id, "❌ Доступ закрыт.")
-        return
+    if message.from_user.id != MY_ID: return
     if message.text == '/start':
-        bot.send_message(message.chat.id, "👋 Привет, Босс! Команды:\n/setrules — настроить видео и текст правил.")
+        bot.send_message(message.chat.id, "👋 Привет, Босс! Команды:\n/setrules — настроить правила (ГИФ/Фото/Текст).")
     elif message.text == '/setrules':
         user_state[message.from_user.id] = 'waiting_media_rules'
-        bot.send_message(message.chat.id, "📝 Отправь мне ВИДЕО, а в описание добавь текст правил!")
+        bot.send_message(message.chat.id, "📝 **Режим настройки правил**\n\n👉 Отправь мне **ГИФКУ** (или фото), а в подпись к ней добавь весь текст правил!")
 
-@bot.message_handler(content_types=['video', 'video_note', 'text'], func=lambda msg: user_state.get(msg.from_user.id) == 'waiting_media_rules', chat_types=['private'])
+@bot.message_handler(content_types=['animation', 'photo', 'text'], func=lambda msg: user_state.get(msg.from_user.id) == 'waiting_media_rules', chat_types=['private'])
 def save_new_media_rules(message):
-    if message.from_user.id != MY_ID:
-        return
-    video_id, text_data = None, ""
-    if message.content_type == 'video':
-        video_id = message.video.file_id
+    if message.from_user.id != MY_ID: return
+    media_id, media_type, text_data = None, "text", ""
+
+    if message.content_type == 'animation':
+        media_id = message.animation.file_id
+        media_type = "animation"
         text_data = message.caption if message.caption else ""
-    elif message.content_type == 'video_note':
-        video_id = message.video_note.file_id
-        text_data = "Смотри правила на видео выше! 🔥"
+    elif message.content_type == 'photo':
+        media_id = message.photo[-1].file_id
+        media_type = "photo"
+        text_data = message.caption if message.caption else ""
     elif message.content_type == 'text':
         text_data = message.text
-    save_rules_data(video_id, text_data)
-    user_state[message.from_user.id] = None
-    bot.send_message(message.chat.id, "✅ Настройки сохранены в базу облака.")
 
+    save_rules_data(media_id, media_type, text_data)
+    user_state[message.from_user.id] = None
+    bot.send_message(message.chat.id, "✅ **Успешно!** Настройки сохранены в облако.")
+
+# 4. РУЧНЫЕ РЕПОРТЫ
 @bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID and (msg.text.lower().startswith('!репорт') or msg.text.lower().startswith('!report')))
 def handle_report(message):
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ Пиши в ответ на сообщение нарушителя!")
-        return
+    if not message.reply_to_message: return
     reported_user = message.reply_to_message.from_user
     bad_message = message.reply_to_message.text if message.reply_to_message.text else "[Медиа/Стикер]"
-    report_notification = f"🚨 **ЖАЛОБА ЧАТИКС!**\n\n👤 От: @{message.from_user.username}\n🎯 На: @{reported_user.username}\n💬 Текст: _{bad_message}_"
-    try:
-        bot.send_message(MY_ID, report_notification, parse_mode='Markdown')
-        bot.reply_to(message, "✅ Жалоба отправлена.")
-    except Exception:
-        bot.reply_to(message, "❌ Ошибка отправки репорта.")
+    
+    now = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+    report_notification = (
+        f"🚨 **РУЧНОЙ РЕПОРТ ОТ ПОДПИСЧИКА!**\n\n"
+        f"👤 **От:** @{message.from_user.username}\n"
+        f"🎯 **Нарушитель:** @{reported_user.username}\n"
+        f"🕒 **Время:** {now}\n"
+        f"💬 **Текст нарушения:** _{bad_message}_\n"
+        f"🔗 Ссылка: https://t.me{str(CHAT_ID)[4:]}/{message.reply_to_message.message_id}"
+    )
+    try: bot.send_message(MY_ID, report_notification, parse_mode='Markdown')
+    except Exception: pass
 
-print("Код для вечного облака готов!")
 bot.infinity_polling()
