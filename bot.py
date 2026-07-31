@@ -216,7 +216,7 @@ def private_commands(message):
     if message.text == '/start': bot.send_message(message.chat.id, "👋 Привет, Босс! Команды:\n/setrules — настроить правила.")
     elif message.text == '/setrules':
         user_state[message.from_user.id] = 'waiting_media_rules'
-        bot.send_message(message.chat.id, "📝 Отправь мне ГИФКУ, а в подпись добавь текст правил")
+        bot.send_message(message.chat.id, "📝 Отправь мне ГИФКУ, а в подпись добавь текст правил!")
 
 @bot.message_handler(content_types=['animation', 'photo', 'text'], func=lambda msg: user_state.get(msg.from_user.id) == 'waiting_media_rules', chat_types=['private'])
 def save_new_media_rules(message):
