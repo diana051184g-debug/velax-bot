@@ -159,7 +159,6 @@ def handle_report(message):
         reported_user = message.reply_to_message.from_user
         bad_message = message.reply_to_message.text if message.reply_to_message.text else "[Медиа/Стикер]"
         
-        # 1. Формируем сочный текстовый отчет
         report_notification = (
             f"🚨 **РЕПОРТ В ЧАТИКС!**\n\n"
             f"👤 **От:** @{message.from_user.username}\n"
@@ -167,10 +166,7 @@ def handle_report(message):
             f"💬 **Текст:** _{bad_message}_"
         )
         bot.send_message(MY_ID, report_notification, parse_mode='Markdown')
-        
-        # 2. Следом напрямую пересылаем оригинал сообщения нарушителя Максиму в личку
         bot.forward_message(MY_ID, CHAT_ID, message.reply_to_message.message_id)
-        
         bot.reply_to(message, "✅ Жалоба отправлена владельцу канала.")
     except Exception: pass
 
