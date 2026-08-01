@@ -250,29 +250,77 @@ def private_commands_and_states(message):
         bot.send_message(message.chat.id, "✅ Настройки обновлены.")
         return
 
-# 5. АВТО-МОДЕРАЦИЯ И ПРИЕМ СИГНАЛОВ ПИНГ-ПОНГА (ФОНОВЫЙ ХЕНДЛЕР)
-@bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'animation', 'sticker', 'video'])
-def moderate_and_ping_handler(message):
-    global CONNECTED_BOT_ID, LAST_RECEIVED_MESSAGE
-    user_id = message.from_user.id
+# 5. НАСТРОЙКА ПРАВИЛ, СТЕПЫ АДМИНКИ И ВЕЧНЫЙ ПИНГ-ПОНГ КОИНОВ В ГРУППЕ
+user_state = {}
+@bot.message_handler(content_types=['animation', 'photo', 'text'], chat_types=['private'])
+def private_commands_and_states(message):
+    if message.from_user.id != MY_ID: return
+    PING_PONG_CHAT_ID = -1003720662180
 
-    # ВЕЧНЫЙ ПИНГ-ПОНГ ДЛЯ БОТОВ (Только в ЛС от привязанного ИИ-будильника)
-    if message.chat.type == "private" and CONNECTED_BOT_ID and user_id == CONNECTED_BOT_ID:
-        if message.text:
-            LAST_RECEIVED_MESSAGE = message.text
-            if "Ты получил коин" in message.text:
-                print(f"Робот поймал сигнал! Начисляю коин боту {CONNECTED_BOT_ID}")
-                # 💰 СЮДА ТЫ МОЖЕШЬ ВСТАВИТЬ СВОЮ ФУНКЦИЮ НАЧИСЛЕНИЯ КОИНОВ
-
-                def delayed_response():
-                    wait_time = random.randint(300, 600)  # СЛУЧАЙНО ОТ 5 ДО 10 МИНУТ
-                    time.sleep(wait_time)
-                    try: bot.send_message(CONNECTED_BOT_ID, "Ты получил коин")
-                    except Exception: pass
-                Thread(target=delayed_response).start()
+    # Обработка личных админ-кнопок Макса в личке главного бота
+    if message.text == "🔗 Связать с будильником":
+        bot.send_message(message.chat.id, "📲 Бро, мы перешли на систему через группу! Просто нажми кнопку запуска ниже.")
         return
 
-    # ФИЛЬТР ЗАЩИТЫ ДЛЯ ГРУППЫ «ЧАТИКС»
+    elif message.text == "🔍 Тест: повтор сообщения":
+        bot.send_message(message.chat.id, "⚙️ Тест связи. Отправляю тестовый коин в группу пинг-понга...")
+        try:
+            bot.send_message(PING_PONG_CHAT_ID, "Тест-повтор: Ты получил коин")
+            bot.send_message(message.chat.id, "✅ Сообщение успешно улетело в группу!")
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка теста: {e}. Проверь, добавлен ли бот в группу.")
+        return
+
+     elif message.text == "🚀 Запустить Пинг-Понг":
+        PING_PONG_CHAT_ID = -1003720662180
+        bot.send_message(message.chat.id, "🔥 Вечный двигатель запущен! Отправляю первый коин в группу...")
+        try: bot.send_message(PING_PONG_CHAT_ID, "Ты получил коин")
+        except Exception as e: bot.send_message(message.chat.id, f"❌ Не удалось отправить: {e}")
+        return
+
+
+    # Команды из лички
+    if message.text == '/start': 
+        bot.send_message(message.chat.id, "👋 Привет, Босс! Команды:\n/setrules — настроить правила.\n/admin — панель ИИ связи.")
+        return
+    elif message.text == '/setrules':
+        user_state[message.from_user.id] = 'waiting_media_rules'
+        bot.send_message(message.chat.id, "📝 Отправь мне ГИФКУ, а в подпись добавь текст правил!")
+        return
+    
+    # Степ сохранения новых правил
+    if user_state.get(message.from_user.id) == 'waiting_media_rules':
+        media_id, media_type = None, "text"
+        if message.content_type == 'animation': media_id, media_type = message.animation.file_id, "animation"
+        elif message.content_type == 'photo': media_id, media_type = message.photo[-1].file_id, "photo"
+        text_data = message.caption if message.caption else (message.text if message.content_type == 'text' else "")
+        save_rules_data(media_id, media_type, text_data)
+        user_state[message.from_user.id] = None
+        bot.send_message(message.chat.id, "✅ Настройки обновлены.")
+        return
+
+# 6. АВТО-МОДЕРАЦИЯ И ПРИЕМ СИГНАЛОВ ПИНГ-ПОНГА (ГЛАВНЫЙ ФОНОВЫЙ ХЕНДЛЕР)
+@bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'animation', 'sticker', 'video'])
+def moderate_and_ping_handler(message):
+    user_id = message.from_user.id
+    PING_PONG_CHAT_ID = -1003720662180
+    ALARM_BOT_ID = 8043583988  # ID твоего нового бота-будильника
+
+    # Ловим пинг от ИИ-будильника строго внутри вашей группы пинг-понга
+    if message.chat.id == PING_PONG_CHAT_ID and user_id == ALARM_BOT_ID:
+        if message.text and "Ты получил коин" in message.text:
+            print(f"Главный бот поймал сигнал в группе! Начисляю коин...")
+            # 💰 СЮДА МОЖЕШЬ ВСТАВИТЬ СВОЮ ФУНКЦИЮ НАЧИСЛЕНИЯ КОИНОВ
+
+            def delayed_response():
+                wait_time = random.randint(300, 600)  # СЛУЧАЙНО ОТ 5 ДО 10 МИНУТ (УКЛАДЫВАЕМСЯ В 11 МИН)
+                time.sleep(wait_time)
+                try: bot.send_message(PING_PONG_CHAT_ID, "Ты получил коин")
+                except Exception: pass
+            Thread(target=delayed_response).start()
+        return
+
+    # ФИЛЬТР ЗАЩИТЫ ДЛЯ ОБЩЕЙ ГРУППЫ «ЧАТИКС»
     if message.chat.id == CHAT_ID:
         if message.from_user.username:
             username_lower = message.from_user.username.lower()
@@ -308,4 +356,3 @@ def moderate_and_ping_handler(message):
                 break
 
 bot.infinity_polling()
-
