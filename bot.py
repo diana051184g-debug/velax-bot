@@ -184,28 +184,95 @@ def handle_report(message):
         bot.reply_to(message, "✅ Жалоба отправлена владельцу канала.")
     except Exception: pass
 
-# 4. АВТО-МОДЕРАЦИЯ И КЭШИРОВАНИЕ + ПРИЕМ СИГНАЛОВ ПИНГ-ПОНГА В ЛИЧКЕ
-@bot.message_handler(func=lambda msg: True)
+# 4. НАСТРОЙКА ПРАВИЛ И СТЕПЫ АДМИНКИ СВЯЗИ В ЛИЧКЕ (ПРИОРТЕТНАЯ ОБРАБОТКА)
+user_state = {}
+@bot.message_handler(content_types=['animation', 'photo', 'text'], chat_types=['private'])
+def private_commands_and_states(message):
+    global CONNECTED_BOT_ID, LAST_RECEIVED_MESSAGE
+    if message.from_user.id != MY_ID: return
+
+    # Проверка текстовых админ-комманд и обычных кнопок
+    if message.text == "🔗 Связать с будильником":
+        SETUP_STATE[message.from_user.id] = 'waiting_bot_username'
+        bot.send_message(message.chat.id, "📲 Отлично, Макс! Пришли мне в этот чат @юзернейм второго бота.")
+        return
+
+    elif message.text == "🔍 Тест: повтор сообщения":
+        if not CONNECTED_BOT_ID:
+            bot.send_message(message.chat.id, "⚠️ Сначала свяжи бота по кнопке!")
+            return
+        bot.send_message(message.chat.id, "⚙️ Тест связи. Отправляю второму боту его последнее сообщение...")
+        try:
+            bot.send_message(CONNECTED_BOT_ID, f"Тест-повтор: {LAST_RECEIVED_MESSAGE}")
+            bot.send_message(message.chat.id, "✅ Сообщение успешно улетело!")
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка теста: {e}")
+        return
+
+    elif message.text == "🚀 Запустить Пинг-Понг":
+        if not CONNECTED_BOT_ID:
+            bot.send_message(message.chat.id, "⚠️ Сначала свяжи бота по кнопке!")
+            return
+        bot.send_message(message.chat.id, "🔥 Вечный двигатель запущен! Отправляю первый коин...")
+        try: bot.send_message(CONNECTED_BOT_ID, "Ты получил коин")
+        except Exception as e: bot.send_message(message.chat.id, f"❌ Не удалось отправить: {e}")
+        return
+
+    # Машина состояний привязки второго бота
+    if SETUP_STATE.get(message.from_user.id) == 'waiting_bot_username' and message.text:
+        target_username = message.text.replace("@", "").strip()
+        try:
+            chat = bot.get_chat(f"@{target_username}")
+            CONNECTED_BOT_ID = chat.id
+            SETUP_STATE[message.from_user.id] = None
+            bot.send_message(message.chat.id, f"✅ Связано! Бот {target_username} запомнен. (ID: {CONNECTED_BOT_ID})")
+        except Exception:
+            bot.send_message(message.chat.id, "❌ Не могу найти бота. Убедись, что он существует и запущен!")
+        return
+
+    # Команды из лички
+    if message.text == '/start': 
+        bot.send_message(message.chat.id, "👋 Привет, Босс! Команды:\n/setrules — настроить правила.\n/admin — панель ИИ связи.")
+        return
+    elif message.text == '/setrules':
+        user_state[message.from_user.id] = 'waiting_media_rules'
+        bot.send_message(message.chat.id, "📝 Отправь мне ГИФКУ, а в подпись добавь текст правил!")
+        return
+    
+    # Степ сохранения новых правил
+    if user_state.get(message.from_user.id) == 'waiting_media_rules':
+        media_id, media_type = None, "text"
+        if message.content_type == 'animation': media_id, media_type = message.animation.file_id, "animation"
+        elif message.content_type == 'photo': media_id, media_type = message.photo[-1].file_id, "photo"
+        text_data = message.caption if message.caption else (message.text if message.content_type == 'text' else "")
+        save_rules_data(media_id, media_type, text_data)
+        user_state[message.from_user.id] = None
+        bot.send_message(message.chat.id, "✅ Настройки обновлены.")
+        return
+
+# 5. АВТО-МОДЕРАЦИЯ И ПРИЕМ СИГНАЛОВ ПИНГ-ПОНГА (ФОНОВЫЙ ХЕНДЛЕР)
+@bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'animation', 'sticker', 'video'])
 def moderate_and_ping_handler(message):
     global CONNECTED_BOT_ID, LAST_RECEIVED_MESSAGE
     user_id = message.from_user.id
 
-    # ВЕЧНЫЙ ПИНГ-ПОНГ ДЛЯ БОТОВ (Только в ЛС от привязанного бота)
+    # ВЕЧНЫЙ ПИНГ-ПОНГ ДЛЯ БОТОВ (Только в ЛС от привязанного ИИ-будильника)
     if message.chat.type == "private" and CONNECTED_BOT_ID and user_id == CONNECTED_BOT_ID:
-        LAST_RECEIVED_MESSAGE = message.text
-        if "Ты получил коин" in message.text:
-            print(f"Робот поймал сигнал! Начисляю коин боту {CONNECTED_BOT_ID}")
-            # 💰 СЮДА МОЖНО ВСТАВИТЬ СВОЙ КОД НАЧИСЛЕНИЯ КОИНОВ В ТВОЮ БАЗУ
+        if message.text:
+            LAST_RECEIVED_MESSAGE = message.text
+            if "Ты получил коин" in message.text:
+                print(f"Робот поймал сигнал! Начисляю коин боту {CONNECTED_BOT_ID}")
+                # 💰 СЮДА ТЫ МОЖЕШЬ ВСТАВИТЬ СВОЮ ФУНКЦИЮ НАЧИСЛЕНИЯ КОИНОВ
 
-            def delayed_response():
-                wait_time = random.randint(300, 600)  # СЛУЧАЙНО ОТ 5 ДО 10 МИНУТ
-                time.sleep(wait_time)
-                try: bot.send_message(CONNECTED_BOT_ID, "Ты получил коин")
-                except Exception: pass
-            Thread(target=delayed_response).start()
-            return
+                def delayed_response():
+                    wait_time = random.randint(300, 600)  # СЛУЧАЙНО ОТ 5 ДО 10 МИНУТ
+                    time.sleep(wait_time)
+                    try: bot.send_message(CONNECTED_BOT_ID, "Ты получил коин")
+                    except Exception: pass
+                Thread(target=delayed_response).start()
+        return
 
-    # Если сообщение пришло из группы «Чатикс» — работает стандартный фильтр
+    # ФИЛЬТР ЗАЩИТЫ ДЛЯ ГРУППЫ «ЧАТИКС»
     if message.chat.id == CHAT_ID:
         if message.from_user.username:
             username_lower = message.from_user.username.lower()
@@ -239,68 +306,6 @@ def moderate_and_ping_handler(message):
                     bot.send_message(MY_ID, log_text, parse_mode='Markdown')
                 except Exception: pass
                 break
-
-# 5. НАСТРОЙКА ПРАВИЛ И СТЕПЫ АДМИНКИ СВЯЗИ В ЛИЧКЕ
-user_state = {}
-@bot.message_handler(content_types=['animation', 'photo', 'text'], chat_types=['private'])
-def private_commands_and_states(message):
-    global CONNECTED_BOT_ID, LAST_RECEIVED_MESSAGE
-    if message.from_user.id != MY_ID: return
-
-    # Обработка личных админ-кнопок
-    if message.text == "🔗 Связать с будильником":
-        SETUP_STATE[message.from_user.id] = 'waiting_bot_username'
-        bot.send_message(message.chat.id, "📲 Отлично, Макс! Пришли мне в этот чат @юзернейм второго бота.")
-        return
-
-    elif message.text == "🔍 Тест: повтор сообщения":
-        if not CONNECTED_BOT_ID:
-            bot.send_message(message.chat.id, "⚠️ Сначала свяжи бота по кнопке!")
-            return
-        bot.send_message(message.chat.id, "⚙️ Тест связи. Отправляю второму боту его последнее сообщение...")
-        try:
-            bot.send_message(CONNECTED_BOT_ID, f"Тест-повтор: {LAST_RECEIVED_MESSAGE}")
-            bot.send_message(message.chat.id, "✅ Сообщение успешно улетело!")
-        except Exception as e:
-            bot.send_message(message.chat.id, f"❌ Ошибка теста: {e}")
-        return
-
-    elif message.text == "🚀 Запустить Пинг-Понг":
-        if not CONNECTED_BOT_ID:
-            bot.send_message(message.chat.id, "⚠️ Сначала свяжи бота по кнопке!")
-            return
-        bot.send_message(message.chat.id, "🔥 Вечный двигатель запущен! Отправляю первый коин...")
-        try: bot.send_message(CONNECTED_BOT_ID, "Ты получил коин")
-        except Exception as e: bot.send_message(message.chat.id, f"❌ Не удалось отправить: {e}")
-        return
-
-    # Степ ввода юзернейма второго бота
-    if SETUP_STATE.get(message.from_user.id) == 'waiting_bot_username' and message.text:
-        target_username = message.text.replace("@", "").strip()
-        try:
-            chat = bot.get_chat(f"@{target_username}")
-            CONNECTED_BOT_ID = chat.id
-            SETUP_STATE[message.from_user.id] = None
-            bot.send_message(message.chat.id, f"✅ Связано! Бот {target_username} запомнен. (ID: {CONNECTED_BOT_ID})")
-        except Exception:
-            bot.send_message(message.chat.id, "❌ Не могу найти бота. Убедись, что он запущен у тебя!")
-        return
-
-    # Команды настроек правил
-    if message.text == '/start': 
-        bot.send_message(message.chat.id, "👋 Привет, Босс! Команды:\n/setrules — настроить правила.\n/admin — панель ИИ связи.")
-    elif message.text == '/setrules':
-        user_state[message.from_user.id] = 'waiting_media_rules'
-        bot.send_message(message.chat.id, "📝 Отправь мне ГИФКУ, а в подпись добавь текст правил!")
-    
-    elif user_state.get(message.from_user.id) == 'waiting_media_rules':
-        media_id, media_type = None, "text"
-        if message.content_type == 'animation': media_id, media_type = message.animation.file_id, "animation"
-        elif message.content_type == 'photo': media_id, media_type = message.photo[-1].file_id, "photo"
-        text_data = message.caption if message.caption else (message.text if message.content_type == 'text' else "")
-        save_rules_data(media_id, media_type, text_data)
-        user_state[message.from_user.id] = None
-        bot.send_message(message.chat.id, "✅ Настройки обновлены.")
 
 bot.infinity_polling()
 
