@@ -262,33 +262,34 @@ def private_commands_and_states(message):
         user_state[message.from_user.id] = None
         bot.send_message(message.chat.id, "✅ Настройки обновлены.")
 
-# 7. 🔥 ГЕНИАЛЬНЫЙ ФОНОВЫЙ АВТО-БУДИЛЬНИК (ИСПРАВЛЕННЫЙ ВАРИАНТ)
+# 7. 🔥 НЕУБИВАЕМЫЙ АСИНХРОННЫЙ АВТО-БУДИЛЬНИК (ФИНАЛЬНАЯ СВЕРХНАДЕЖНАЯ ВЕРСИЯ)
 def auto_ping_server():
-    import socket
+    import requests
     global NEXT_PING_TIME
     
-    # ВСТАВЬ СЮДА ТОЧНЫЙ URL ТВОЕГО ГЛАВНОГО БОТА ИЗ НАСТРОЕК RENDER (БЕЗ HTTPS://)
-    # Например: "://onrender.com"
-    HOST = "://onrender.com" 
+    # ВСТАВЬ СЮДА ТОЧНЫЙ URL ТВОЕГО БОТА С СЕРВЕРА RENDER
+    APP_URL = "https://onrender.com" 
+    
+    # Ждем 2 минуты после старта, чтобы бот полностью прогрузился
+    time.sleep(120)
     
     while True:
-        wait_seconds = random.randint(300, 600)  # Интервал от 5 до 10 минут
+        wait_seconds = random.randint(300, 600)  # Случайно спим от 5 до 10 минут
         NEXT_PING_TIME = datetime.now() + timedelta(seconds=wait_seconds)
         
         time.sleep(wait_seconds)
         try:
-            # Используем самый низкоуровневый быстрый сокет, который никогда не повесит бота!
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
-            # Просто стучимся на стандартный порт веб-сервера
-            sock.connect((HOST, 80))
-            sock.close()
-            print("🤖 Само-будильник: успешно пинганул сервер через порт!")
-        except Exception: 
-            pass
+            # Отправляем полноценный HTTP-запрос с фейковым юзер-агентом, чтобы Render думал, что зашел человек
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VelaxPing/1.0'}
+            response = requests.get(APP_URL, headers=headers, timeout=15)
+            print(f"🤖 Само-будильник: Сервер успешно пнут! Ответ: {response.status_code}")
+        except Exception as e: 
+            print(f"🤖 Само-будильник: Ошибка пинга (но бот не завис!): {e}")
 
-# Запуск фонового будильника в отдельном потоке
-Thread(target=auto_ping_server, daemon=True).start()
+# Запуск фонового будильника в изолированном потоке-демоне
+ping_thread = Thread(target=auto_ping_server)
+ping_thread.daemon = True
+ping_thread.start()
 
 bot.infinity_polling()
 
