@@ -4,7 +4,7 @@ import time
 import re
 import json
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Thread
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -26,10 +26,9 @@ FLOOD_DELAY = 1.0
 USER_LAST_MESSAGES = {}
 USER_SPAM_COUNT = {}
 
-# Глобальные переменные для ИИ-связи ботов
-CONNECTED_BOT_ID = None
-LAST_RECEIVED_MESSAGE = "Пока нет сообщений от второго бота"
-SETUP_STATE = {}
+# Переменные для отслеживания времени и таймеров авто-будильника
+BOT_START_TIME = datetime.now()
+NEXT_PING_TIME = None
 
 def load_user_cache():
     if os.path.exists(CACHE_FILE):
@@ -59,7 +58,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args): return
 
 Thread(target=lambda: HTTPServer(('', int(os.environ.get('PORT', 8080))), HealthCheckHandler).serve_forever(), daemon=True).start()
-
 def load_rules_data():
     media_id, media_type = None, "text"
     text_data = "Привет! Правила канала Velax FAMILY еще не настроены. 🔥"
@@ -70,6 +68,7 @@ def load_rules_data():
     if os.path.exists(TEXT_FILE):
         with open(TEXT_FILE, "r", encoding="utf-8") as f: text_data = f.read()
     return media_id, media_type, text_data
+
 def save_rules_data(media_id, media_type, text_data):
     with open(TEXT_FILE, "w", encoding="utf-8") as f: f.write(text_data if text_data else "")
     with open(MEDIA_FILE, "w", encoding="utf-8") as f: f.write(media_id if media_id else "")
@@ -87,7 +86,7 @@ def parse_duration(duration_str):
     if unit == 'd': return amount * 86400
     return 86400
 
-# 1. АВТО-ОТВЕТ НА ПОСТЫ ИЗ КАНАЛА
+# 1. АВТО-ОТВЕТ НА ПОСТЫ ИЗ КАНАЛА В ЧАТИКСЕ
 @bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID and (msg.forward_from_chat is not None or msg.from_user.username == "Channel_Bot" or getattr(msg, 'is_automatic_forward', False)))
 def auto_reply_rules(message):
     media_id, media_type, rules_text = load_rules_data()
@@ -102,7 +101,7 @@ def auto_reply_rules(message):
         if media_type == "animation" and media_id: bot.send_animation(CHAT_ID, media_id, caption=rules_text, reply_to_message_id=message.message_id)
         else: bot.reply_to(message, rules_text)
 
-# 2. УПРАВЛЕНИЕ ИЗ ЛИЧКИ БОТА ДЛЯ МАКСИМА (/ban, /mute, /unban, /unmute)
+# 2. УПРАВЛЕНИЕ ДЛЯ МАКСИМА ИЗ ЛИЧКИ (/ban, /mute, /unban, /unmute)
 @bot.message_handler(commands=['ban', 'mute', 'unmute', 'unban'], chat_types=['private'])
 def private_admin_commands(message):
     if message.from_user.id != MY_ID: return
@@ -112,13 +111,13 @@ def private_admin_commands(message):
     
     mentions = [word for word in args if word.startswith('@')]
     if not mentions:
-        bot.reply_to(message, "❌ Ошибка! Укажите юзернейм нарушителя через @username.\nПример: `/mute @username 15m` или `/ban @username` 🛑")
+        bot.reply_to(message, "❌ Ошибка! Укажите нарушителя через @username.\nПример: `/mute @username 15m`")
         return
 
     username = mentions[0].replace('@', '').strip().lower()
     
     if username not in USER_ID_CACHE:
-        bot.reply_to(message, f"❌ Пользователь @{username} не найден в базе бота! Он должен сначала написать хотя бы одно сообщение в группу.")
+        bot.reply_to(message, f"❌ Пользователь @{username} не найден в базе бота! Он должен сначала что-то написать в группу.")
         return
         
     target_id = USER_ID_CACHE[username]
@@ -129,8 +128,8 @@ def private_admin_commands(message):
         until_timestamp = int(time.time() + seconds)
         try:
             bot.restrict_chat_member(CHAT_ID, target_id, until_date=until_timestamp, can_send_messages=False)
-            bot.reply_to(message, f"🤐 **Мут успешно выдан в чате!**\n👤 Нарушитель: @{username}\n🕒 Срок: `{duration_str}`")
-        except Exception: bot.reply_to(message, "❌ Ошибка! Проверь права бота в чате.")
+            bot.reply_to(message, f"🤐 **Мут выдан!**\n👤 Нарушитель: @{username}\n🕒 Срок: `{duration_str}`")
+        except Exception: bot.reply_to(message, "❌ Ошибка прав бота.")
 
     elif command == '/ban':
         duration_str = args[2] if len(args) > 2 else "0"
@@ -139,31 +138,52 @@ def private_admin_commands(message):
         try:
             bot.ban_chat_member(CHAT_ID, target_id, until_date=until_timestamp)
             disp_time = f"на срок {duration_str}" if seconds > 0 else "НАВСЕГДА 🛑"
-            bot.reply_to(message, f"🔨 **Бан успешно выдан в чате!**\n👤 Нарушитель: @{username}\n🕒 Срок: {disp_time}")
+            bot.reply_to(message, f"🔨 **Бан выдан!**\n👤 Нарушитель: @{username}\n🕒 Срок: {disp_time}")
         except Exception: bot.reply_to(message, "❌ Ошибка бана.")
 
     elif command == '/unmute':
         try:
             bot.restrict_chat_member(CHAT_ID, target_id, can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True)
-            bot.reply_to(message, f"😇 **Размут выполнен!** Пользователь @{username} снова может писать в чате.")
+            bot.reply_to(message, f"😇 **Размут выполнен!** @{username} снова может писать.")
         except Exception: bot.reply_to(message, "❌ Не удалось снять мут.")
 
     elif command == '/unban':
         try:
             bot.unban_chat_member(CHAT_ID, target_id, only_if_banned=True)
-            bot.reply_to(message, f"🔓 **Разбан выполнен!** Пользователь @{username} удален из ЧС группы.")
+            bot.reply_to(message, f"🔓 **Разбан выполнен!** @{username} удален из ЧС группы.")
         except Exception: bot.reply_to(message, "❌ Не удалось разбанить.")
 
-# NEW: СКРЫТНАЯ АДМИН-ПАНЕЛЬ МАКСА ДЛЯ СВЯЗИ БОТОВ В ЛИЧКЕ
-@bot.message_handler(commands=['admin'], chat_types=['private'])
-def max_ai_admin_panel(message):
+# 3. 🔥 НОВАЯ КОМАНДА ДЛЯ ЛИЧКИ — МОНИТОРИНГ ТАЙМЕРА АВТО-ОБНОВЛЕНИЯ
+@bot.message_handler(commands=['uptime'], chat_types=['private'])
+def check_bot_uptime(message):
     if message.from_user.id != MY_ID: return
-    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(telebot.types.KeyboardButton("🔗 Связать с будильником"))
-    keyboard.add(telebot.types.KeyboardButton("🚀 Запустить Пинг-Понг"))
-    keyboard.add(telebot.types.KeyboardButton("🔍 Тест: повтор сообщения"))
-    bot.send_message(message.chat.id, "⚙️ Панель «Чатикс» запущена в личке. Выберите действие:", reply_markup=keyboard)
-# 3. ПОЛЬЗОВАТЕЛЬСКИЙ РЕПОРТ В ОБЩЕЙ ГРУППЕ «ЧАТИКС»
+    global BOT_START_TIME, NEXT_PING_TIME
+    
+    # Считаем общее время аптайма
+    uptime_delta = datetime.now() - BOT_START_TIME
+    hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"`{hours}ч {minutes}м {seconds}с`"
+    
+    # Считаем таймер до следующего пинга
+    if NEXT_PING_TIME:
+        time_left = NEXT_PING_TIME - datetime.now()
+        if time_left.total_seconds() > 0:
+            left_min, left_sec = divmod(int(time_left.total_seconds()), 60)
+            ping_status = f"⏳ До авто-обновления осталось: `{left_min}м {left_sec}с`"
+        else:
+            ping_status = "🔄 Сервер обновляется прямо сейчас..."
+    else:
+        ping_status = "💤 Само-будильник ещё не запустил первый цикл."
+        
+    status_text = (
+        f"🤖 **Статистика Главного Бот-Помощника:**\n\n"
+        f"⏱ Время непрерывной работы: {uptime_str}\n"
+        f"{ping_status}\n\n"
+        f"⚙️ Сервер Render активен, бот бодрствует 24/7!"
+    )
+    bot.send_message(message.chat.id, status_text, parse_mode='Markdown')
+# 4. ПОЛЬЗОВАТЕЛЬСКИЙ РЕПОРТ В ОБЩЕЙ ГРУППЕ «ЧАТИКС»
 @bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID and (msg.text.lower().startswith(('/report', '!репорт', '!report'))))
 def handle_report(message):
     if not message.reply_to_message:
@@ -184,175 +204,84 @@ def handle_report(message):
         bot.reply_to(message, "✅ Жалоба отправлена владельцу канала.")
     except Exception: pass
 
-# 4. НАСТРОЙКА ПРАВИЛ И СТЕПЫ АДМИНКИ СВЯЗИ В ЛИЧКЕ (ПРИОРТЕТНАЯ ОБРАБОТКА)
-user_state = {}
-@bot.message_handler(content_types=['animation', 'photo', 'text'], chat_types=['private'])
-def private_commands_and_states(message):
-    global CONNECTED_BOT_ID, LAST_RECEIVED_MESSAGE
-    if message.from_user.id != MY_ID: return
-
-    # Проверка текстовых админ-комманд и обычных кнопок
-    if message.text == "🔗 Связать с будильником":
-        SETUP_STATE[message.from_user.id] = 'waiting_bot_username'
-        bot.send_message(message.chat.id, "📲 Отлично, Макс! Пришли мне в этот чат @юзернейм второго бота.")
-        return
-
-    elif message.text == "🔍 Тест: повтор сообщения":
-        if not CONNECTED_BOT_ID:
-            bot.send_message(message.chat.id, "⚠️ Сначала свяжи бота по кнопке!")
-            return
-        bot.send_message(message.chat.id, "⚙️ Тест связи. Отправляю второму боту его последнее сообщение...")
-        try:
-            bot.send_message(CONNECTED_BOT_ID, f"Тест-повтор: {LAST_RECEIVED_MESSAGE}")
-            bot.send_message(message.chat.id, "✅ Сообщение успешно улетело!")
-        except Exception as e:
-            bot.send_message(message.chat.id, f"❌ Ошибка теста: {e}")
-        return
-
-    elif message.text == "🚀 Запустить Пинг-Понг":
-        if not CONNECTED_BOT_ID:
-            bot.send_message(message.chat.id, "⚠️ Сначала свяжи бота по кнопке!")
-            return
-        bot.send_message(message.chat.id, "🔥 Вечный двигатель запущен! Отправляю первый коин...")
-        try: bot.send_message(CONNECTED_BOT_ID, "Ты получил коин")
-        except Exception as e: bot.send_message(message.chat.id, f"❌ Не удалось отправить: {e}")
-        return
-
-    # Машина состояний привязки второго бота
-    if SETUP_STATE.get(message.from_user.id) == 'waiting_bot_username' and message.text:
-        target_username = message.text.replace("@", "").strip()
-        try:
-            chat = bot.get_chat(f"@{target_username}")
-            CONNECTED_BOT_ID = chat.id
-            SETUP_STATE[message.from_user.id] = None
-            bot.send_message(message.chat.id, f"✅ Связано Бот {target_username} запомнен. (ID: {CONNECTED_BOT_ID})")
-        except Exception:
-            bot.send_message(message.chat.id, "❌ Не могу найти бота. Убедись, что он существует и запущен!")
-        return
-
-    # Команды из лички
-    if message.text == '/start': 
-        bot.send_message(message.chat.id, "👋 Привет, Босс! Команды:\n/setrules — настроить правила.\n/admin — панель ИИ связи.")
-        return
-    elif message.text == '/setrules':
-        user_state[message.from_user.id] = 'waiting_media_rules'
-        bot.send_message(message.chat.id, "📝 Отправь мне ГИФКУ, а в подпись добавь текст правил!")
-        return
-    
-    # Степ сохранения новых правил
-    if user_state.get(message.from_user.id) == 'waiting_media_rules':
-        media_id, media_type = None, "text"
-        if message.content_type == 'animation': media_id, media_type = message.animation.file_id, "animation"
-        elif message.content_type == 'photo': media_id, media_type = message.photo[-1].file_id, "photo"
-        text_data = message.caption if message.caption else (message.text if message.content_type == 'text' else "")
-        save_rules_data(media_id, media_type, text_data)
-        user_state[message.from_user.id] = None
-        bot.send_message(message.chat.id, "✅ Настройки обновлены.")
-        return
-
-# 5. НАСТРОЙКА ПРАВИЛ, СТЕПЫ АДМИНКИ И ВЕЧНЫЙ ПИНГ-ПОНГ КОИНОВ В ГРУППЕ
-user_state = {}
-@bot.message_handler(content_types=['animation', 'photo', 'text'], chat_types=['private'])
-def private_commands_and_states(message):
-    if message.from_user.id != MY_ID: return
-    PING_PONG_CHAT_ID = -1003720662180
-
-    # Обработка личных админ-кнопок Макса в личке главного бота
-    if message.text == "🔗 Связать с будильником":
-        bot.send_message(message.chat.id, "📲 Бро, мы перешли на систему через группу! Просто нажми кнопку запуска ниже.")
-        return
-
-    elif message.text == "🔍 Тест: повтор сообщения":
-        bot.send_message(message.chat.id, "⚙️ Тест связи. Отправляю тестовый коин в группу пинг-понга...")
-        try:
-            bot.send_message(PING_PONG_CHAT_ID, "Тест-повтор: Ты получил коин")
-            bot.send_message(message.chat.id, "✅ Сообщение успешно улетело в группу!")
-        except Exception as e:
-            bot.send_message(message.chat.id, f"❌ Ошибка теста: {e}. Проверь, добавлен ли бот в группу.")
-        return
-
-     elif message.text == "🚀 Запустить Пинг-Понг":
-        PING_PONG_CHAT_ID = -1003720662180
-        bot.send_message(message.chat.id, "🔥 Вечный двигатель запущен! Отправляю первый коин в группу...")
-        try: bot.send_message(PING_PONG_CHAT_ID, "Ты получил коин")
-        except Exception as e: bot.send_message(message.chat.id, f"❌ Не удалось отправить: {e}")
-        return
-
-
-    # Команды из лички
-    if message.text == '/start': 
-        bot.send_message(message.chat.id, "👋 Привет, Босс! Команды:\n/setrules — настроить правила.\n/admin — панель ИИ связи.")
-        return
-    elif message.text == '/setrules':
-        user_state[message.from_user.id] = 'waiting_media_rules'
-        bot.send_message(message.chat.id, "📝 Отправь мне ГИФКУ, а в подпись добавь текст правил!")
-        return
-    
-    # Степ сохранения новых правил
-    if user_state.get(message.from_user.id) == 'waiting_media_rules':
-        media_id, media_type = None, "text"
-        if message.content_type == 'animation': media_id, media_type = message.animation.file_id, "animation"
-        elif message.content_type == 'photo': media_id, media_type = message.photo[-1].file_id, "photo"
-        text_data = message.caption if message.caption else (message.text if message.content_type == 'text' else "")
-        save_rules_data(media_id, media_type, text_data)
-        user_state[message.from_user.id] = None
-        bot.send_message(message.chat.id, "✅ Настройки обновлены.")
-        return
-
-# 6. АВТО-МОДЕРАЦИЯ И ПРИЕМ СИГНАЛОВ ПИНГ-ПОНГА (ГЛАВНЫЙ ФОНОВЫЙ ХЕНДЛЕР)
-@bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'animation', 'sticker', 'video'])
-def moderate_and_ping_handler(message):
+# 5. АВТО-МОДЕРАЦИЯ И КЭШИРОВАНИЕ ДЛЯ ГРУППЫ «ЧАТИКС»
+@bot.message_handler(func=lambda msg: msg.chat.id == CHAT_ID)
+def moderate_chatix(message):
     user_id = message.from_user.id
-    PING_PONG_CHAT_ID = -1003720662180
-    ALARM_BOT_ID = 8043583988  # ID твоего нового бота-будильника
+    if message.from_user.username:
+        username_lower = message.from_user.username.lower()
+        if USER_ID_CACHE.get(username_lower) != user_id:
+            USER_ID_CACHE[username_lower] = user_id
+            save_user_cache()
 
-    # Ловим пинг от ИИ-будильника строго внутри вашей группы пинг-понга
-    if message.chat.id == PING_PONG_CHAT_ID and user_id == ALARM_BOT_ID:
-        if message.text and "Ты получил коин" in message.text:
-            print(f"Главный бот поймал сигнал в группе! Начисляю коин...")
-            # 💰 СЮДА МОЖЕШЬ ВСТАВИТЬ СВОЮ ФУНКЦИЮ НАЧИСЛЕНИЯ КОИНОВ
+    if not message.text: return
+    if message.forward_from_chat is not None or message.from_user.username == "Channel_Bot": return
 
-            def delayed_response():
-                wait_time = random.randint(300, 600)  # СЛУЧАЙНО ОТ 5 ДО 10 МИНУТ (УКЛАДЫВАЕМСЯ В 11 МИН)
-                time.sleep(wait_time)
-                try: bot.send_message(PING_PONG_CHAT_ID, "Ты получил коин")
-                except Exception: pass
-            Thread(target=delayed_response).start()
-        return
+    text_lower = message.text.lower()
 
-    # ФИЛЬТР ЗАЩИТЫ ДЛЯ ОБЩЕЙ ГРУППЫ «ЧАТИКС»
-    if message.chat.id == CHAT_ID:
-        if message.from_user.username:
-            username_lower = message.from_user.username.lower()
-            if USER_ID_CACHE.get(username_lower) != user_id:
-                USER_ID_CACHE[username_lower] = user_id
-                save_user_cache()
-
-        if not message.text: return
-        if message.forward_from_chat is not None or message.from_user.username == "Channel_Bot": return
-
-        text_lower = message.text.lower()
-
-        if user_id in USER_LAST_MESSAGES:
-            if USER_LAST_MESSAGES[user_id] == text_lower:
-                USER_SPAM_COUNT[user_id] = USER_SPAM_COUNT.get(user_id, 1) + 1
-                if USER_SPAM_COUNT[user_id] > 2:
-                    try:
-                        bot.delete_message(CHAT_ID, message.message_id)
-                        log_spam = f"🛡️ **СПАМ УДАЛЕН!**\n👤 Нарушитель: @{message.from_user.username}\n📈 Повторов: {USER_SPAM_COUNT[user_id]}\n💬 Текст: _{message.text}_"
-                        bot.send_message(MY_ID, log_spam, parse_mode='Markdown')
-                        return
-                    except Exception: pass
-            else: USER_SPAM_COUNT[user_id] = 1
-        USER_LAST_MESSAGES[user_id] = text_lower
-
-        for word in BAD_WORDS:
-            if word in text_lower:
+    if user_id in USER_LAST_MESSAGES:
+        if USER_LAST_MESSAGES[user_id] == text_lower:
+            USER_SPAM_COUNT[user_id] = USER_SPAM_COUNT.get(user_id, 1) + 1
+            if USER_SPAM_COUNT[user_id] > 2:
                 try:
                     bot.delete_message(CHAT_ID, message.message_id)
-                    log_text = f"🛡️ **МАТ/ССЫЛКА УДАЛЕНА!**\n👤 От: @{message.from_user.username}\n🚫 Слово: `{word}`\n💬 Текст: _{message.text}_"
-                    bot.send_message(MY_ID, log_text, parse_mode='Markdown')
+                    log_spam = f"🛡️ **СПАМ УДАЛЕН!**\n👤 Нарушитель: @{message.from_user.username}\n📈 Повторов: {USER_SPAM_COUNT[user_id]}\n💬 Текст: _{message.text}_"
+                    bot.send_message(MY_ID, log_spam, parse_mode='Markdown')
+                    return
                 except Exception: pass
-                break
+        else: USER_SPAM_COUNT[user_id] = 1
+    USER_LAST_MESSAGES[user_id] = text_lower
+
+    for word in BAD_WORDS:
+        if word in text_lower:
+            try:
+                bot.delete_message(CHAT_ID, message.message_id)
+                log_text = f"🛡️ **МАТ/ССЫЛКА УДАЛЕНА!**\n👤 От: @{message.from_user.username}\n🚫 Слово: `{word}`\n💬 Текст: _{message.text}_"
+                bot.send_message(MY_ID, log_text, parse_mode='Markdown')
+            except Exception: pass
+            break
+
+# 6. НАСТРОЙКА ПРАВИЛ ИЗ ЛИЧКИ БОТА
+user_state = {}
+@bot.message_handler(content_types=['animation', 'photo', 'text'], chat_types=['private'])
+def private_commands_and_states(message):
+    if message.from_user.id != MY_ID: return
+
+    if message.text == '/start': 
+        bot.send_message(message.chat.id, "👋 Привет, Босс! Команды:\n/setrules — настроить правила.\n/uptime — проверить статус само-обновления.")
+    elif message.text == '/setrules':
+        user_state[message.from_user.id] = 'waiting_media_rules'
+        bot.send_message(message.chat.id, "📝 Отправь мне ГИФКУ, а в подпись добавь текст правил!")
+    
+    elif user_state.get(message.from_user.id) == 'waiting_media_rules':
+        media_id, media_type = None, "text"
+        if message.content_type == 'animation': media_id, media_type = message.animation.file_id, "animation"
+        elif message.content_type == 'photo': media_id, media_type = message.photo[-1].file_id, "photo"
+        text_data = message.caption if message.caption else (message.text if message.content_type == 'text' else "")
+        save_rules_data(media_id, media_type, text_data)
+        user_state[message.from_user.id] = None
+        bot.send_message(message.chat.id, "✅ Настройки обновлены.")
+
+# 7. 🔥 ГЕНИАЛЬНЫЙ ФОНОВЫЙ АВТО-БУДИЛЬНИК С ТАЙМЕРАМИ ПРЯМО НА СЕРВЕРЕ
+def auto_ping_server():
+    import urllib.request
+    global NEXT_PING_TIME
+    
+    # ВСТАВЬ СЮДА ТОЧНЫЙ URL ТВОЕГО ГЛАВНОГО БОТА ИЗ НАСТРОЕК RENDER
+    APP_URL = "https://onrender.com" 
+    
+    while True:
+        wait_seconds = random.randint(300, 600)  # Случайный интервал от 5 до 10 минут
+        NEXT_PING_TIME = datetime.now() + timedelta(seconds=wait_seconds)
+        
+        time.sleep(wait_seconds)
+        try:
+            # Бот сам посылает пустой запрос на свой сервер, сбрасывая таймер сна Рендера!
+            urllib.request.urlopen(APP_URL, timeout=10)
+            print("🤖 Само-будильник: успешно отправил пинг на свой сервер!")
+        except Exception: pass
+
+# Запуск фонового будильника в отдельном потоке
+Thread(target=auto_ping_server, daemon=True).start()
 
 bot.infinity_polling()
