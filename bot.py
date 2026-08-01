@@ -262,26 +262,33 @@ def private_commands_and_states(message):
         user_state[message.from_user.id] = None
         bot.send_message(message.chat.id, "✅ Настройки обновлены.")
 
-# 7. 🔥 ГЕНИАЛЬНЫЙ ФОНОВЫЙ АВТО-БУДИЛЬНИК С ТАЙМЕРАМИ ПРЯМО НА СЕРВЕРЕ
+# 7. 🔥 ГЕНИАЛЬНЫЙ ФОНОВЫЙ АВТО-БУДИЛЬНИК (ИСПРАВЛЕННЫЙ ВАРИАНТ)
 def auto_ping_server():
-    import urllib.request
+    import socket
     global NEXT_PING_TIME
     
-    # ВСТАВЬ СЮДА ТОЧНЫЙ URL ТВОЕГО ГЛАВНОГО БОТА ИЗ НАСТРОЕК RENDER
-    APP_URL = "https://onrender.com" 
+    # ВСТАВЬ СЮДА ТОЧНЫЙ URL ТВОЕГО ГЛАВНОГО БОТА ИЗ НАСТРОЕК RENDER (БЕЗ HTTPS://)
+    # Например: "://onrender.com"
+    HOST = "://onrender.com" 
     
     while True:
-        wait_seconds = random.randint(300, 600)  # Случайный интервал от 5 до 10 минут
+        wait_seconds = random.randint(300, 600)  # Интервал от 5 до 10 минут
         NEXT_PING_TIME = datetime.now() + timedelta(seconds=wait_seconds)
         
         time.sleep(wait_seconds)
         try:
-            # Бот сам посылает пустой запрос на свой сервер, сбрасывая таймер сна Рендера!
-            urllib.request.urlopen(APP_URL, timeout=10)
-            print("🤖 Само-будильник: успешно отправил пинг на свой сервер!")
-        except Exception: pass
+            # Используем самый низкоуровневый быстрый сокет, который никогда не повесит бота!
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            # Просто стучимся на стандартный порт веб-сервера
+            sock.connect((HOST, 80))
+            sock.close()
+            print("🤖 Само-будильник: успешно пинганул сервер через порт!")
+        except Exception: 
+            pass
 
 # Запуск фонового будильника в отдельном потоке
 Thread(target=auto_ping_server, daemon=True).start()
 
 bot.infinity_polling()
+
