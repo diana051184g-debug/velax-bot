@@ -225,7 +225,7 @@ def private_commands_and_states(message):
             chat = bot.get_chat(f"@{target_username}")
             CONNECTED_BOT_ID = chat.id
             SETUP_STATE[message.from_user.id] = None
-            bot.send_message(message.chat.id, f"✅ Связано! Бот {target_username} запомнен. (ID: {CONNECTED_BOT_ID})")
+            bot.send_message(message.chat.id, f"✅ Связано Бот {target_username} запомнен. (ID: {CONNECTED_BOT_ID})")
         except Exception:
             bot.send_message(message.chat.id, "❌ Не могу найти бота. Убедись, что он существует и запущен!")
         return
